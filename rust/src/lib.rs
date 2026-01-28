@@ -841,7 +841,9 @@ pub unsafe extern "C" fn zcashlc_get_current_address(
         ) {
             Ok(Some(ua)) => {
                 let address_str = ua.encode(&network);
-                Ok(CString::new(address_str).unwrap().into_raw())
+                Ok(CString::new(address_str)
+                    .expect("Zcash address encoding cannot contain null bytes")
+                    .into_raw())
             }
             Ok(None) => Err(anyhow!(
                 "No payment address was available for account {:?}",
@@ -1005,7 +1007,9 @@ pub unsafe extern "C" fn zcashlc_get_next_available_address(
         {
             Ok(Some((ua, _))) => {
                 let address_str = ua.encode(&network);
-                Ok(CString::new(address_str).unwrap().into_raw())
+                Ok(CString::new(address_str)
+                    .expect("Zcash address encoding cannot contain null bytes")
+                    .into_raw())
             }
             Ok(None) => Err(anyhow!(
                 "No payment address was available for account {:?}",
@@ -1435,7 +1439,8 @@ pub unsafe extern "C" fn zcashlc_put_sapling_subtree_roots(
         let wallet_db_handle = unsafe { wallet_db_handle.as_mut() }
             .ok_or_else(|| anyhow!("Database handle is required"))?;
 
-        let roots = unsafe { roots.as_ref().unwrap() };
+        let roots = unsafe { roots.as_ref() }
+            .ok_or_else(|| anyhow!("Subtree roots pointer is null"))?;
         let roots_slice: &[ffi::SubtreeRoot] =
             unsafe { slice::from_raw_parts(roots.ptr, roots.len) };
 
@@ -1485,7 +1490,8 @@ pub unsafe extern "C" fn zcashlc_put_orchard_subtree_roots(
         let wallet_db_handle = unsafe { wallet_db_handle.as_mut() }
             .ok_or_else(|| anyhow!("Database handle is required"))?;
 
-        let roots = unsafe { roots.as_ref().unwrap() };
+        let roots = unsafe { roots.as_ref() }
+            .ok_or_else(|| anyhow!("Subtree roots pointer is null"))?;
         let roots_slice: &[ffi::SubtreeRoot] =
             unsafe { slice::from_raw_parts(roots.ptr, roots.len) };
 
@@ -3032,7 +3038,7 @@ pub unsafe extern "C" fn zcashlc_transaction_data_requests(
                     TransactionDataRequest::TransactionsInvolvingAddress(v) => {
                         ffi::TransactionDataRequest::TransactionsInvolvingAddress {
                             address: CString::new(v.address().encode(&network))
-                                .unwrap()
+                                .expect("Zcash address encoding cannot contain null bytes")
                                 .into_raw(),
                             block_range_start: v.block_range_start().into(),
                             block_range_end: v
