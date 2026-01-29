@@ -93,9 +93,25 @@ typedef enum FfiZecUsdExchange {
  */
 typedef struct FfiAccountMetadataKey FfiAccountMetadataKey;
 
+/**
+ * A handle to the filesystem block database connection.
+ *
+ * This struct holds a persistent database connection that can be reused across
+ * multiple FFI calls, reducing connection overhead during wallet sync operations.
+ */
+typedef struct FsBlockDbHandle FsBlockDbHandle;
+
 typedef struct LwdConn LwdConn;
 
 typedef struct TorRuntime TorRuntime;
+
+/**
+ * A handle to the wallet database connection.
+ *
+ * This struct holds a persistent database connection that can be reused across
+ * multiple FFI calls, reducing connection overhead during wallet sync operations.
+ */
+typedef struct WalletDbHandle WalletDbHandle;
 
 /**
  * A struct that contains a 16-byte account uuid.
@@ -744,6 +760,62 @@ typedef struct FfiAddress {
 } FfiAddress;
 
 /**
+ * Opens a handle to the wallet database.
+ *
+ * # Safety
+ *
+ * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
+ *   alignment of `1`. Its contents must be a string representing a valid system path in the
+ *   operating system's preferred representation.
+ * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
+ * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
+ *   documentation of pointer::offset.
+ * - Call [`zcashlc_free_wallet_db_handle`] to free the memory associated with the returned pointer
+ *   when done using it.
+ */
+struct WalletDbHandle *zcashlc_open_wallet_db(const uint8_t *db_data,
+                                              uintptr_t db_data_len,
+                                              uint32_t network_id);
+
+/**
+ * Frees a wallet database handle.
+ *
+ * # Safety
+ *
+ * - If `ptr` is non-null, it must be a pointer returned by [`zcashlc_open_wallet_db`]
+ *   that has not previously been freed.
+ */
+void zcashlc_free_wallet_db_handle(struct WalletDbHandle *ptr);
+
+/**
+ * Opens a handle to the filesystem block database.
+ *
+ * # Safety
+ *
+ * - `fs_block_db_root` must be non-null and valid for reads for `fs_block_db_root_len` bytes,
+ *   and it must have an alignment of `1`. Its contents must be a string representing a valid
+ *   system path in the operating system's preferred representation.
+ * - The memory referenced by `fs_block_db_root` must not be mutated for the duration of the
+ *   function call.
+ * - The total size `fs_block_db_root_len` must be no larger than `isize::MAX`. See the safety
+ *   documentation of pointer::offset.
+ * - Call [`zcashlc_free_fs_block_db_handle`] to free the memory associated with the returned pointer
+ *   when done using it.
+ */
+struct FsBlockDbHandle *zcashlc_open_fs_block_db(const uint8_t *fs_block_db_root,
+                                                 uintptr_t fs_block_db_root_len);
+
+/**
+ * Frees a filesystem block database handle.
+ *
+ * # Safety
+ *
+ * - If `ptr` is non-null, it must be a pointer returned by [`zcashlc_open_fs_block_db`]
+ *   that has not previously been freed.
+ */
+void zcashlc_free_fs_block_db_handle(struct FsBlockDbHandle *ptr);
+
+/**
  * Initializes global Rust state, such as the logging infrastructure and threadpools.
  *
  * `log_level` defines how the Rust layer logs its events. These values are supported,
@@ -809,41 +881,31 @@ void zcashlc_clear_last_error(void);
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `seed` must be non-null and valid for reads for `seed_len` bytes, and it must have an
  *   alignment of `1`.
  * - The memory referenced by `seed` must not be mutated for the duration of the function call.
  * - The total size `seed_len` must be no larger than `isize::MAX`. See the safety documentation
  *   of pointer::offset.
  */
-int32_t zcashlc_init_data_database(const uint8_t *db_data,
-                                   uintptr_t db_data_len,
+int32_t zcashlc_init_data_database(struct WalletDbHandle *wallet_db_handle,
                                    const uint8_t *seed,
-                                   uintptr_t seed_len,
-                                   uint32_t network_id);
+                                   uintptr_t seed_len);
 
 /**
  * Returns a list of the accounts in the wallet.
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - Call [`zcashlc_free_accounts`] to free the memory associated with the returned pointer
  *   when done using it.
  */
-struct FfiAccounts *zcashlc_list_accounts(const uint8_t *db_data,
-                                          uintptr_t db_data_len,
-                                          uint32_t network_id);
+struct FfiAccounts *zcashlc_list_accounts(struct WalletDbHandle *wallet_db_handle);
 
 /**
  * Returns the account data for the specified account identifier, or the [`ffi::Account::NOT_FOUND`]
@@ -851,12 +913,9 @@ struct FfiAccounts *zcashlc_list_accounts(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `account_uuid_bytes` must be non-null and valid for reads for 16 bytes, and it must have an
  *   alignment of `1`.
  * - The memory referenced by `account_uuid_bytes` must not be mutated for the duration of the
@@ -864,9 +923,7 @@ struct FfiAccounts *zcashlc_list_accounts(const uint8_t *db_data,
  * - Call [`zcashlc_free_account`] to free the memory associated with the returned pointer
  *   when done using it.
  */
-struct FfiAccount *zcashlc_get_account(const uint8_t *db_data,
-                                       uintptr_t db_data_len,
-                                       uint32_t network_id,
+struct FfiAccount *zcashlc_get_account(struct WalletDbHandle *wallet_db_handle,
                                        const uint8_t *account_uuid_bytes);
 
 /**
@@ -887,12 +944,9 @@ struct FfiAccount *zcashlc_get_account(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `seed` must be non-null and valid for reads for `seed_len` bytes, and it must have an
  *   alignment of `1`.
  * - The memory referenced by `seed` must not be mutated for the duration of the function call.
@@ -908,14 +962,12 @@ struct FfiAccount *zcashlc_get_account(const uint8_t *db_data,
  *
  * [ZIP 316]: https://zips.z.cash/zip-0316
  */
-struct FFIBinaryKey *zcashlc_create_account(const uint8_t *db_data,
-                                            uintptr_t db_data_len,
+struct FFIBinaryKey *zcashlc_create_account(struct WalletDbHandle *wallet_db_handle,
                                             const uint8_t *seed,
                                             uintptr_t seed_len,
                                             const uint8_t *treestate,
                                             uintptr_t treestate_len,
                                             int64_t recover_until,
-                                            uint32_t network_id,
                                             const char *account_name,
                                             const char *key_source);
 
@@ -932,12 +984,9 @@ struct FFIBinaryKey *zcashlc_create_account(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `ufvk` must be non-null and must point to a null-terminated UTF-8 string.
  * - `treestate` must be non-null and valid for reads for `treestate_len` bytes, and it must have an
  *   alignment of `1`.
@@ -950,13 +999,11 @@ struct FFIBinaryKey *zcashlc_create_account(const uint8_t *db_data,
  * - Call [`zcashlc_free_ffi_uuid`] to free the memory associated with the returned pointer when
  *   you are finished using it.
  */
-struct FfiUuid *zcashlc_import_account_ufvk(const uint8_t *db_data,
-                                            uintptr_t db_data_len,
+struct FfiUuid *zcashlc_import_account_ufvk(struct WalletDbHandle *wallet_db_handle,
                                             const char *ufvk,
                                             const uint8_t *treestate,
                                             uintptr_t treestate_len,
                                             int64_t recover_until,
-                                            uint32_t network_id,
                                             uint32_t purpose,
                                             const char *account_name,
                                             const char *key_source,
@@ -973,23 +1020,18 @@ struct FfiUuid *zcashlc_import_account_ufvk(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `seed` must be non-null and valid for reads for `seed_len` bytes, and it must have an
  *   alignment of `1`.
  * - The memory referenced by `seed` must not be mutated for the duration of the function call.
  * - The total size `seed_len` must be no larger than `isize::MAX`. See the safety documentation
  *   of pointer::offset.
  */
-int8_t zcashlc_is_seed_relevant_to_any_derived_account(const uint8_t *db_data,
-                                                       uintptr_t db_data_len,
+int8_t zcashlc_is_seed_relevant_to_any_derived_account(struct WalletDbHandle *wallet_db_handle,
                                                        const uint8_t *seed,
-                                                       uintptr_t seed_len,
-                                                       uint32_t network_id);
+                                                       uintptr_t seed_len);
 
 /**
  * Deletes the specified account, and all transactions that exclusively involve it, from the
@@ -1011,21 +1053,16 @@ int8_t zcashlc_is_seed_relevant_to_any_derived_account(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
- * - `seed` must be non-null and valid for reads for `seed_len` bytes, and it must have an
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
+ * - `account_uuid_bytes` must be non-null and valid for reads for 16 bytes, and it must have an
  *   alignment of `1`.
  *
  * [`OvkPolicy::Discard`]: zcash_client_backend::wallet::OvkPolicy::Discard
  * [`OvkPolicy::Custom`]: zcash_client_backend::wallet::OvkPolicy::Custom
  */
-bool zcashlc_delete_account(const uint8_t *db_data,
-                            uintptr_t db_data_len,
-                            uint32_t network_id,
+bool zcashlc_delete_account(struct WalletDbHandle *wallet_db_handle,
                             const uint8_t *account_uuid_bytes);
 
 /**
@@ -1033,12 +1070,9 @@ bool zcashlc_delete_account(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `account_uuid_bytes` must be non-null and valid for reads for 16 bytes, and it must have an
  *   alignment of `1`.
  * - The memory referenced by `account_uuid_bytes` must not be mutated for the duration of the
@@ -1046,10 +1080,8 @@ bool zcashlc_delete_account(const uint8_t *db_data,
  * - Call [`zcashlc_string_free`] to free the memory associated with the returned pointer
  *   when done using it.
  */
-char *zcashlc_get_current_address(const uint8_t *db_data,
-                                  uintptr_t db_data_len,
-                                  const uint8_t *account_uuid_bytes,
-                                  uint32_t network_id);
+char *zcashlc_get_current_address(struct WalletDbHandle *wallet_db_handle,
+                                  const uint8_t *account_uuid_bytes);
 
 /**
  * Generates and returns an ephemeral address for one-time use, such as when receiving a swap from
@@ -1057,12 +1089,9 @@ char *zcashlc_get_current_address(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `account_uuid_bytes` must be non-null and valid for reads for 16 bytes, and it must have an
  *   alignment of `1`.
  * - The memory referenced by `account_uuid_bytes` must not be mutated for the duration of the
@@ -1070,9 +1099,7 @@ char *zcashlc_get_current_address(const uint8_t *db_data,
  * - Call [`zcashlc_free_single_use_address`] to free the memory associated with the returned pointer
  *   when done using it.
  */
-struct FfiSingleUseTaddr *zcashlc_get_single_use_taddr(const uint8_t *db_data,
-                                                       uintptr_t db_data_len,
-                                                       uint32_t network_id,
+struct FfiSingleUseTaddr *zcashlc_get_single_use_taddr(struct WalletDbHandle *wallet_db_handle,
                                                        const uint8_t *account_uuid_bytes);
 
 /**
@@ -1091,12 +1118,9 @@ struct FfiSingleUseTaddr *zcashlc_get_single_use_taddr(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `account_uuid_bytes` must be non-null and valid for reads for 16 bytes, and it must have an
  *   alignment of `1`.
  * - The memory referenced by `account_uuid_bytes` must not be mutated for the duration of the
@@ -1104,10 +1128,8 @@ struct FfiSingleUseTaddr *zcashlc_get_single_use_taddr(const uint8_t *db_data,
  * - Call [`zcashlc_string_free`] to free the memory associated with the returned pointer
  *   when done using it.
  */
-char *zcashlc_get_next_available_address(const uint8_t *db_data,
-                                         uintptr_t db_data_len,
+char *zcashlc_get_next_available_address(struct WalletDbHandle *wallet_db_handle,
                                          const uint8_t *account_uuid_bytes,
-                                         uint32_t network_id,
                                          uint32_t receiver_flags);
 
 /**
@@ -1117,12 +1139,9 @@ char *zcashlc_get_next_available_address(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `account_uuid_bytes` must be non-null and valid for reads for 16 bytes, and it must have an
  *   alignment of `1`.
  * - The memory referenced by `account_uuid_bytes` must not be mutated for the duration of the
@@ -1130,10 +1149,8 @@ char *zcashlc_get_next_available_address(const uint8_t *db_data,
  * - Call [`zcashlc_free_keys`] to free the memory associated with the returned pointer
  *   when done using it.
  */
-struct FFIEncodedKeys *zcashlc_list_transparent_receivers(const uint8_t *db_data,
-                                                          uintptr_t db_data_len,
-                                                          const uint8_t *account_uuid_bytes,
-                                                          uint32_t network_id);
+struct FFIEncodedKeys *zcashlc_list_transparent_receivers(struct WalletDbHandle *wallet_db_handle,
+                                                          const uint8_t *account_uuid_bytes);
 
 /**
  * Returns the verified transparent balance for `address`, which ignores utxos that have been
@@ -1141,19 +1158,14 @@ struct FFIEncodedKeys *zcashlc_list_transparent_receivers(const uint8_t *db_data
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `address` must be non-null and must point to a null-terminated UTF-8 string.
  * - The memory referenced by `address` must not be mutated for the duration of the function call.
  */
-int64_t zcashlc_get_verified_transparent_balance(const uint8_t *db_data,
-                                                 uintptr_t db_data_len,
+int64_t zcashlc_get_verified_transparent_balance(struct WalletDbHandle *wallet_db_handle,
                                                  const char *address,
-                                                 uint32_t network_id,
                                                  struct ConfirmationsPolicy confirmations_policy);
 
 /**
@@ -1162,20 +1174,15 @@ int64_t zcashlc_get_verified_transparent_balance(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `account_uuid_bytes` must be non-null and valid for reads for 16 bytes, and it must have an
  *   alignment of `1`.
  * - The memory referenced by `account_uuid_bytes` must not be mutated for the duration of the
  *   function call.
  */
-int64_t zcashlc_get_verified_transparent_balance_for_account(const uint8_t *db_data,
-                                                             uintptr_t db_data_len,
-                                                             uint32_t network_id,
+int64_t zcashlc_get_verified_transparent_balance_for_account(struct WalletDbHandle *wallet_db_handle,
                                                              const uint8_t *account_uuid_bytes,
                                                              struct ConfirmationsPolicy confirmations_policy);
 
@@ -1184,39 +1191,29 @@ int64_t zcashlc_get_verified_transparent_balance_for_account(const uint8_t *db_d
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `address` must be non-null and must point to a null-terminated UTF-8 string.
  * - The memory referenced by `address` must not be mutated for the duration of the function call.
  */
-int64_t zcashlc_get_total_transparent_balance(const uint8_t *db_data,
-                                              uintptr_t db_data_len,
-                                              const char *address,
-                                              uint32_t network_id);
+int64_t zcashlc_get_total_transparent_balance(struct WalletDbHandle *wallet_db_handle,
+                                              const char *address);
 
 /**
  * Returns the balance for `account`, including all UTXOs that we know about.
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `account_uuid_bytes` must be non-null and valid for reads for 16 bytes, and it must have an
  *   alignment of `1`.
  * - The memory referenced by `account_uuid_bytes` must not be mutated for the duration of the
  *   function call.
  */
-int64_t zcashlc_get_total_transparent_balance_for_account(const uint8_t *db_data,
-                                                          uintptr_t db_data_len,
-                                                          uint32_t network_id,
+int64_t zcashlc_get_total_transparent_balance_for_account(struct WalletDbHandle *wallet_db_handle,
                                                           const uint8_t *account_uuid_bytes);
 
 /**
@@ -1225,23 +1222,18 @@ int64_t zcashlc_get_total_transparent_balance_for_account(const uint8_t *db_data
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `txid_bytes` must be non-null and valid for reads for 32 bytes, and it must have an alignment
  *   of `1`.
  * - `memo_bytes_ret` must be non-null and must point to an allocated 512-byte region of memory.
  */
-bool zcashlc_get_memo(const uint8_t *db_data,
-                      uintptr_t db_data_len,
+bool zcashlc_get_memo(struct WalletDbHandle *wallet_db_handle,
                       const uint8_t *txid_bytes,
                       uint32_t output_pool,
                       uint16_t output_index,
-                      uint8_t *memo_bytes_ret,
-                      uint32_t network_id);
+                      uint8_t *memo_bytes_ret);
 
 /**
  * Returns a ZIP-32 signature of the given seed bytes.
@@ -1273,17 +1265,12 @@ bool zcashlc_seed_fingerprint(const uint8_t *seed,
  * # Safety
  *
  * - `safe_rewind_ret` must be non-null, aligned, and valid for writing an `int64_t`.
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  */
-int64_t zcashlc_rewind_to_height(const uint8_t *db_data,
-                                 uintptr_t db_data_len,
+int64_t zcashlc_rewind_to_height(struct WalletDbHandle *wallet_db_handle,
                                  uint32_t height,
-                                 uint32_t network_id,
                                  int64_t *safe_rewind_ret);
 
 /**
@@ -1294,20 +1281,15 @@ int64_t zcashlc_rewind_to_height(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of `pointer::offset`.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `roots` must be non-null and initialized.
  * - The memory referenced by `roots` must not be mutated for the duration of the function call.
  */
-bool zcashlc_put_sapling_subtree_roots(const uint8_t *db_data,
-                                       uintptr_t db_data_len,
+bool zcashlc_put_sapling_subtree_roots(struct WalletDbHandle *wallet_db_handle,
                                        uint64_t start_index,
-                                       const struct FfiSubtreeRoots *roots,
-                                       uint32_t network_id);
+                                       const struct FfiSubtreeRoots *roots);
 
 /**
  * Adds a sequence of Orchard subtree roots to the data store.
@@ -1317,20 +1299,15 @@ bool zcashlc_put_sapling_subtree_roots(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of `pointer::offset`.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `roots` must be non-null and initialized.
  * - The memory referenced by `roots` must not be mutated for the duration of the function call.
  */
-bool zcashlc_put_orchard_subtree_roots(const uint8_t *db_data,
-                                       uintptr_t db_data_len,
+bool zcashlc_put_orchard_subtree_roots(struct WalletDbHandle *wallet_db_handle,
                                        uint64_t start_index,
-                                       const struct FfiSubtreeRoots *roots,
-                                       uint32_t network_id);
+                                       const struct FfiSubtreeRoots *roots);
 
 /**
  * Updates the wallet's view of the blockchain.
@@ -1343,17 +1320,11 @@ bool zcashlc_put_orchard_subtree_roots(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of `pointer::offset`.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  */
-bool zcashlc_update_chain_tip(const uint8_t *db_data,
-                              uintptr_t db_data_len,
-                              int32_t height,
-                              uint32_t network_id);
+bool zcashlc_update_chain_tip(struct WalletDbHandle *wallet_db_handle, int32_t height);
 
 /**
  * Returns the height to which the wallet has been fully scanned.
@@ -1365,16 +1336,11 @@ bool zcashlc_update_chain_tip(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of `pointer::offset`.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  */
-int64_t zcashlc_fully_scanned_height(const uint8_t *db_data,
-                                     uintptr_t db_data_len,
-                                     uint32_t network_id);
+int64_t zcashlc_fully_scanned_height(struct WalletDbHandle *wallet_db_handle);
 
 /**
  * Returns the maximum height that the wallet has scanned.
@@ -1387,16 +1353,11 @@ int64_t zcashlc_fully_scanned_height(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of `pointer::offset`.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  */
-int64_t zcashlc_max_scanned_height(const uint8_t *db_data,
-                                   uintptr_t db_data_len,
-                                   uint32_t network_id);
+int64_t zcashlc_max_scanned_height(struct WalletDbHandle *wallet_db_handle);
 
 /**
  * Returns the account balances and sync status given the specified minimum number of
@@ -1406,19 +1367,13 @@ int64_t zcashlc_max_scanned_height(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must
- *   have an alignment of `1`. Its contents must be a string representing a valid system
- *   path in the operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the
- *   function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - Call [`zcashlc_free_wallet_summary`] to free the memory associated with the returned
  *   pointer when done using it.
  */
-struct FfiWalletSummary *zcashlc_get_wallet_summary(const uint8_t *db_data,
-                                                    uintptr_t db_data_len,
-                                                    uint32_t network_id,
+struct FfiWalletSummary *zcashlc_get_wallet_summary(struct WalletDbHandle *wallet_db_handle,
                                                     struct ConfirmationsPolicy confirmations_policy);
 
 /**
@@ -1431,19 +1386,13 @@ struct FfiWalletSummary *zcashlc_get_wallet_summary(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must
- *   have an alignment of `1`. Its contents must be a string representing a valid system
- *   path in the operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the
- *   function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - Call [`zcashlc_free_scan_ranges`] to free the memory associated with the returned
  *   pointer when done using it.
  */
-struct FfiScanRanges *zcashlc_suggest_scan_ranges(const uint8_t *db_data,
-                                                  uintptr_t db_data_len,
-                                                  uint32_t network_id);
+struct FfiScanRanges *zcashlc_suggest_scan_ranges(struct WalletDbHandle *wallet_db_handle);
 
 /**
  * Scans new blocks added to the cache for any transactions received by the tracked
@@ -1465,61 +1414,47 @@ struct FfiScanRanges *zcashlc_suggest_scan_ranges(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `fs_block_db_root` must be non-null and valid for reads for `fs_block_db_root_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `fs_block_db_root` must not be mutated for the duration of the function call.
- * - The total size `fs_block_db_root_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `wallet_db_handle` must be a non-null pointer returned by [`zcashlc_open_wallet_db`] that has not
+ *   previously been freed.
+ * - `wallet_db_handle` must not be passed to two FFI calls at the same time.
+ * - `fs_block_db_handle` must be a non-null pointer returned by [`zcashlc_open_fs_block_db`] that has not
+ *   previously been freed.
+ * - `fs_block_db_handle` must not be passed to two FFI calls at the same time.
  */
-struct FfiScanSummary *zcashlc_scan_blocks(const uint8_t *fs_block_cache_root,
-                                           uintptr_t fs_block_cache_root_len,
-                                           const uint8_t *db_data,
-                                           uintptr_t db_data_len,
+struct FfiScanSummary *zcashlc_scan_blocks(struct WalletDbHandle *wallet_db_handle,
+                                           struct FsBlockDbHandle *fs_block_db_handle,
                                            int32_t from_height,
                                            const uint8_t *from_state,
                                            uintptr_t from_state_len,
-                                           uint32_t scan_limit,
-                                           uint32_t network_id);
+                                           uint32_t scan_limit);
 
 /**
  * Inserts a UTXO into the wallet database.
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
- * - `txid_bytes` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
+ * - `txid_bytes` must be non-null and valid for reads for `txid_bytes_len` bytes, and it must have an
  *   alignment of `1`.
- * - The memory referenced by `txid_bytes_len` must not be mutated for the duration of the function call.
+ * - The memory referenced by `txid_bytes` must not be mutated for the duration of the function call.
  * - The total size `txid_bytes_len` must be no larger than `isize::MAX`. See the safety
  *   documentation of pointer::offset.
- * - `script_bytes` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
+ * - `script_bytes` must be non-null and valid for reads for `script_bytes_len` bytes, and it must have an
  *   alignment of `1`.
- * - The memory referenced by `script_bytes_len` must not be mutated for the duration of the function call.
+ * - The memory referenced by `script_bytes` must not be mutated for the duration of the function call.
  * - The total size `script_bytes_len` must be no larger than `isize::MAX`. See the safety
  *   documentation of pointer::offset.
  */
-bool zcashlc_put_utxo(const uint8_t *db_data,
-                      uintptr_t db_data_len,
+bool zcashlc_put_utxo(struct WalletDbHandle *wallet_db_handle,
                       const uint8_t *txid_bytes,
                       uintptr_t txid_bytes_len,
                       int32_t index,
                       const uint8_t *script_bytes,
                       uintptr_t script_bytes_len,
                       int64_t value,
-                      int32_t height,
-                      uint32_t network_id);
+                      int32_t height);
 
 /**
  * # Safety
@@ -1527,15 +1462,12 @@ bool zcashlc_put_utxo(const uint8_t *db_data,
  *
  * Returns true when successful, false otherwise. When false is returned caller
  * should check for errors.
- * - `fs_block_db_root` must be non-null and valid for reads for `fs_block_db_root_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `fs_block_db_root` must not be mutated for the duration of the function call.
- * - The total size `fs_block_db_root_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ *
+ * - `fs_block_db_handle` must be a non-null pointer returned by [`zcashlc_open_fs_block_db`] that has not
+ *   previously been freed.
+ * - `fs_block_db_handle` must not be passed to two FFI calls at the same time.
  */
-bool zcashlc_init_block_metadata_db(const uint8_t *fs_block_db_root,
-                                    uintptr_t fs_block_db_root_len);
+bool zcashlc_init_block_metadata_db(struct FsBlockDbHandle *fs_block_db_handle);
 
 /**
  * Writes the blocks provided in `blocks_meta` into the `BlockMeta` database
@@ -1547,37 +1479,29 @@ bool zcashlc_init_block_metadata_db(const uint8_t *fs_block_db_root,
  *
  * # Safety
  *
- * - `fs_block_db_root` must be non-null and valid for reads for `fs_block_db_root_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `fs_block_db_root` must not be mutated for the duration of the function call.
- * - The total size `fs_block_db_root_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `fs_block_db_handle` must be a non-null pointer returned by [`zcashlc_open_fs_block_db`] that has not
+ *   previously been freed.
+ * - `fs_block_db_handle` must not be passed to two FFI calls at the same time.
  * - Block metadata represented in `blocks_meta` must be non-null. Caller must guarantee that the
  *   memory reference by this pointer is not freed up, dereferenced or invalidated while this
  *   function is invoked.
  */
-bool zcashlc_write_block_metadata(const uint8_t *fs_block_db_root,
-                                  uintptr_t fs_block_db_root_len,
+bool zcashlc_write_block_metadata(struct FsBlockDbHandle *fs_block_db_handle,
                                   struct FFIBlocksMeta *blocks_meta);
 
 /**
- * Rewinds the data database to the given height.
+ * Rewinds the block cache to the given height.
  *
  * If the requested height is greater than or equal to the height of the last scanned
  * block, this function does nothing.
  *
  * # Safety
  *
- * - `fs_block_db_root` must be non-null and valid for reads for `fs_block_db_root_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `fs_block_db_root` must not be mutated for the duration of the function call.
- * - The total size `fs_block_db_root_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `fs_block_db_handle` must be a non-null pointer returned by [`zcashlc_open_fs_block_db`] that has not
+ *   previously been freed.
+ * - `fs_block_db_handle` must not be passed to two FFI calls at the same time.
  */
-bool zcashlc_rewind_fs_block_cache_to_height(const uint8_t *fs_block_db_root,
-                                             uintptr_t fs_block_db_root_len,
+bool zcashlc_rewind_fs_block_cache_to_height(struct FsBlockDbHandle *fs_block_db_handle,
                                              int32_t height);
 
 /**
@@ -1587,32 +1511,20 @@ bool zcashlc_rewind_fs_block_cache_to_height(const uint8_t *fs_block_db_root,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
- * - `tx` must be non-null and valid for reads for `tx_len` bytes, and it must have an
- *   alignment of `1`.
- * - The memory referenced by `tx` must not be mutated for the duration of the function call.
- * - The total size `tx_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `fs_block_db_handle` must be a non-null pointer returned by [`zcashlc_open_fs_block_db`] that has not
+ *   previously been freed.
+ * - `fs_block_db_handle` must not be passed to two FFI calls at the same time.
  */
-int32_t zcashlc_latest_cached_block_height(const uint8_t *fs_block_db_root,
-                                           uintptr_t fs_block_db_root_len);
+int32_t zcashlc_latest_cached_block_height(struct FsBlockDbHandle *fs_block_db_handle);
 
 /**
- * Decrypts whatever parts of the specified transaction it can and stores them in db_data.
+ * Decrypts whatever parts of the specified transaction it can and stores them in the wallet database.
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `tx` must be non-null and valid for reads for `tx_len` bytes, and it must have an
  *   alignment of `1`.
  * - The memory referenced by `tx` must not be mutated for the duration of the function call.
@@ -1621,12 +1533,10 @@ int32_t zcashlc_latest_cached_block_height(const uint8_t *fs_block_db_root,
  * - `txid_ret` must be non-null and valid for writes of 32 bytes with an alignment of 1.
  *   On successful execution this will contain the txid of the decrypted transaction.
  */
-int32_t zcashlc_decrypt_and_store_transaction(const uint8_t *db_data,
-                                              uintptr_t db_data_len,
+int32_t zcashlc_decrypt_and_store_transaction(struct WalletDbHandle *wallet_db_handle,
                                               const uint8_t *tx,
                                               uintptr_t tx_len,
                                               int64_t mined_height,
-                                              uint32_t network_id,
                                               uint8_t *txid_ret);
 
 /**
@@ -1636,12 +1546,9 @@ int32_t zcashlc_decrypt_and_store_transaction(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `account_uuid_bytes` must be non-null and valid for reads for 16 bytes, and it must have an alignment
  *   of `1`.
  * - The memory referenced by `account_uuid_bytes` must not be mutated for the duration of the
@@ -1652,13 +1559,11 @@ int32_t zcashlc_decrypt_and_store_transaction(const uint8_t *db_data,
  * - Call [`zcashlc_free_boxed_slice`] to free the memory associated with the returned
  *   pointer when done using it.
  */
-struct FfiBoxedSlice *zcashlc_propose_transfer(const uint8_t *db_data,
-                                               uintptr_t db_data_len,
+struct FfiBoxedSlice *zcashlc_propose_transfer(struct WalletDbHandle *wallet_db_handle,
                                                const uint8_t *account_uuid_bytes,
                                                const char *to,
                                                int64_t value,
                                                const uint8_t *memo,
-                                               uint32_t network_id,
                                                struct ConfirmationsPolicy confirmations_policy);
 
 /**
@@ -1668,12 +1573,9 @@ struct FfiBoxedSlice *zcashlc_propose_transfer(const uint8_t *db_data,
  *
  * # Safety
  *
- * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
- *   alignment of `1`. Its contents must be a string representing a valid system path in the
- *   operating system's preferred representation.
- * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
- * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
- *   documentation of pointer::offset.
+ * - `db_handle` must be a non-null pointer returned by [`zcashlc_open_db`] that has not
+ *   previously been freed.
+ * - `db_handle` must not be passed to two FFI calls at the same time.
  * - `account_uuid_bytes` must be non-null and valid for reads for 16 bytes, and it must have an alignment
  *   of `1`.
  * - The memory referenced by `account_uuid_bytes` must not be mutated for the duration of the
@@ -1684,9 +1586,7 @@ struct FfiBoxedSlice *zcashlc_propose_transfer(const uint8_t *db_data,
  * - Call [`zcashlc_free_boxed_slice`] to free the memory associated with the returned
  *   pointer when done using it.
  */
-struct FfiBoxedSlice *zcashlc_propose_send_max_transfer(const uint8_t *db_data,
-                                                        uintptr_t db_data_len,
-                                                        uint32_t network_id,
+struct FfiBoxedSlice *zcashlc_propose_send_max_transfer(struct WalletDbHandle *wallet_db_handle,
                                                         const uint8_t *account_uuid_bytes,
                                                         const char *to,
                                                         const uint8_t *memo,
@@ -1717,11 +1617,9 @@ struct FfiBoxedSlice *zcashlc_propose_send_max_transfer(const uint8_t *db_data,
  * - Call [`zcashlc_free_boxed_slice`] to free the memory associated with the returned
  *   pointer when done using it.
  */
-struct FfiBoxedSlice *zcashlc_propose_transfer_from_uri(const uint8_t *db_data,
-                                                        uintptr_t db_data_len,
+struct FfiBoxedSlice *zcashlc_propose_transfer_from_uri(struct WalletDbHandle *wallet_db_handle,
                                                         const uint8_t *account_uuid_bytes,
                                                         const char *payment_uri,
-                                                        uint32_t network_id,
                                                         struct ConfirmationsPolicy confirmations_policy);
 
 int32_t zcashlc_branch_id_for_height(int32_t height, uint32_t network_id);
@@ -1778,13 +1676,11 @@ void zcashlc_string_free(char *s);
  * - Call [`zcashlc_free_boxed_slice`] to free the memory associated with the returned
  *   pointer when done using it.
  */
-struct FfiBoxedSlice *zcashlc_propose_shielding(const uint8_t *db_data,
-                                                uintptr_t db_data_len,
+struct FfiBoxedSlice *zcashlc_propose_shielding(struct WalletDbHandle *wallet_db_handle,
                                                 const uint8_t *account_uuid_bytes,
                                                 const uint8_t *memo,
                                                 uint64_t shielding_threshold,
                                                 const char *transparent_receiver,
-                                                uint32_t network_id,
                                                 struct ConfirmationsPolicy confirmations_policy);
 
 /**
@@ -1840,8 +1736,7 @@ struct FfiBoxedSlice *zcashlc_propose_shielding(const uint8_t *db_data,
  * - The total size `output_params_len` must be no larger than `isize::MAX`. See the safety
  *   documentation of pointer::offset.
  */
-FfiTxIds *zcashlc_create_proposed_transactions(const uint8_t *db_data,
-                                               uintptr_t db_data_len,
+FfiTxIds *zcashlc_create_proposed_transactions(struct WalletDbHandle *wallet_db_handle,
                                                const uint8_t *proposal_ptr,
                                                uintptr_t proposal_len,
                                                const uint8_t *usk_ptr,
@@ -1849,8 +1744,7 @@ FfiTxIds *zcashlc_create_proposed_transactions(const uint8_t *db_data,
                                                const uint8_t *spend_params,
                                                uintptr_t spend_params_len,
                                                const uint8_t *output_params,
-                                               uintptr_t output_params_len,
-                                               uint32_t network_id);
+                                               uintptr_t output_params_len);
 
 /**
  * Creates a partially-constructed (unsigned without proofs) transaction from the given proposal.
@@ -1889,9 +1783,7 @@ FfiTxIds *zcashlc_create_proposed_transactions(const uint8_t *db_data,
  * - Call [`zcashlc_free_boxed_slice`] to free the memory associated with the returned
  *   pointer when done using it.
  */
-struct FfiBoxedSlice *zcashlc_create_pczt_from_proposal(const uint8_t *db_data,
-                                                        uintptr_t db_data_len,
-                                                        uint32_t network_id,
+struct FfiBoxedSlice *zcashlc_create_pczt_from_proposal(struct WalletDbHandle *wallet_db_handle,
                                                         const uint8_t *proposal_ptr,
                                                         uintptr_t proposal_len,
                                                         const uint8_t *account_uuid_bytes);
@@ -2042,9 +1934,7 @@ struct FfiBoxedSlice *zcashlc_add_proofs_to_pczt(const uint8_t *pczt_ptr,
  * - Call [`zcashlc_free_boxed_slice`] to free the memory associated with the returned pointer
  *   when done using it.
  */
-struct FfiBoxedSlice *zcashlc_extract_and_store_from_pczt(const uint8_t *db_data,
-                                                          uintptr_t db_data_len,
-                                                          uint32_t network_id,
+struct FfiBoxedSlice *zcashlc_extract_and_store_from_pczt(struct WalletDbHandle *wallet_db_handle,
                                                           const uint8_t *pczt_with_proofs_ptr,
                                                           uintptr_t pczt_with_proofs_len,
                                                           const uint8_t *pczt_with_sigs_ptr,
@@ -2073,9 +1963,7 @@ struct FfiBoxedSlice *zcashlc_extract_and_store_from_pczt(const uint8_t *db_data
  * - The total size `txid_bytes_len` must be no larger than `isize::MAX`. See the safety
  *   documentation of pointer::offset.
  */
-void zcashlc_set_transaction_status(const uint8_t *db_data,
-                                    uintptr_t db_data_len,
-                                    uint32_t network_id,
+void zcashlc_set_transaction_status(struct WalletDbHandle *wallet_db_handle,
                                     const uint8_t *txid_bytes,
                                     uintptr_t txid_bytes_len,
                                     struct FfiTransactionStatus status);
@@ -2094,9 +1982,7 @@ void zcashlc_set_transaction_status(const uint8_t *db_data,
  * - Call [`zcashlc_free_transaction_data_requests`] to free the memory associated with the
  *   returned pointer when done using it.
  */
-struct FfiTransactionDataRequests *zcashlc_transaction_data_requests(const uint8_t *db_data,
-                                                                     uintptr_t db_data_len,
-                                                                     uint32_t network_id);
+struct FfiTransactionDataRequests *zcashlc_transaction_data_requests(struct WalletDbHandle *wallet_db_handle);
 
 /**
  * Detects notes with corrupt witnesses, and adds the block ranges corresponding to the corrupt
@@ -2112,7 +1998,7 @@ struct FfiTransactionDataRequests *zcashlc_transaction_data_requests(const uint8
  * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
  *   documentation of pointer::offset.
  */
-void zcashlc_fix_witnesses(const uint8_t *db_data, uintptr_t db_data_len, uint32_t network_id);
+void zcashlc_fix_witnesses(struct WalletDbHandle *wallet_db_handle);
 
 /**
  * Creates a Tor runtime.
@@ -2439,9 +2325,7 @@ struct FfiBoxedSlice *zcashlc_tor_lwd_conn_get_tree_state(struct LwdConn *lwd_co
  *   pointer when done using it.
  */
 struct FfiAddressCheckResult *zcashlc_tor_lwd_conn_update_transparent_address_transactions(struct LwdConn *lwd_conn,
-                                                                                           const uint8_t *db_data,
-                                                                                           uintptr_t db_data_len,
-                                                                                           uint32_t network_id,
+                                                                                           struct WalletDbHandle *wallet_db_handle,
                                                                                            const char *address,
                                                                                            uint32_t start,
                                                                                            int64_t end);
@@ -2470,9 +2354,7 @@ struct FfiAddressCheckResult *zcashlc_tor_lwd_conn_update_transparent_address_tr
  *   pointer when done using it.
  */
 struct FfiAddressCheckResult *zcashlc_tor_lwd_conn_fetch_utxos_by_address(struct LwdConn *lwd_conn,
-                                                                          const uint8_t *db_data,
-                                                                          uintptr_t db_data_len,
-                                                                          uint32_t network_id,
+                                                                          struct WalletDbHandle *wallet_db_handle,
                                                                           const uint8_t *account_uuid_bytes,
                                                                           const char *address);
 
@@ -2501,9 +2383,7 @@ struct FfiAddressCheckResult *zcashlc_tor_lwd_conn_fetch_utxos_by_address(struct
  *   pointer when done using it.
  */
 struct FfiAddressCheckResult *zcashlc_tor_lwd_conn_check_single_use_taddr(struct LwdConn *lwd_conn,
-                                                                          const uint8_t *db_data,
-                                                                          uintptr_t db_data_len,
-                                                                          uint32_t network_id,
+                                                                          struct WalletDbHandle *wallet_db_handle,
                                                                           const uint8_t *account_uuid_bytes);
 
 /**
