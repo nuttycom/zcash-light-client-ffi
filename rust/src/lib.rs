@@ -124,14 +124,13 @@ where
 /// multiple FFI calls, reducing connection overhead during wallet sync operations.
 pub struct WalletDbHandle {
     db: WalletDb<rusqlite::Connection, Network, SystemClock, OsRng>,
-    network: Network,
 }
 
 impl WalletDbHandle {
     fn new(db_path: &Path, network: Network) -> anyhow::Result<Self> {
         let db = WalletDb::for_path(db_path, network, SystemClock, OsRng)
             .map_err(|e| anyhow!("Error opening wallet database: {}", e))?;
-        Ok(Self { db, network })
+        Ok(Self { db })
     }
 
     pub fn db(&self) -> &WalletDb<rusqlite::Connection, Network, SystemClock, OsRng> {
@@ -143,7 +142,7 @@ impl WalletDbHandle {
     }
 
     pub fn network(&self) -> Network {
-        self.network
+        *self.db.params()
     }
 }
 
